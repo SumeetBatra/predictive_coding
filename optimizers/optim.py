@@ -26,13 +26,13 @@ class Optimizer(object):
     def scale_batch(self, param, batch_size):
         if self.batch_scale:
             param.grad["weights"] = (1 / batch_size) * param.grad["weights"]
-            if param.use_bias:
+            if param.bias is not None:
                 param.grad["bias"] = (1 / batch_size) * param.grad["bias"]
 
     def clip_grads(self, param):
         if self.grad_clip is not None:
             param.grad["weights"] = torch.clamp(param.grad["weights"], -self.grad_clip, self.grad_clip)
-            if param.use_bias:
+            if param.bias is not None:
                 param.grad["bias"] = torch.clamp(param.grad["bias"], -self.grad_clip, self.grad_clip)
 
     def decay_weights(self, param):
@@ -94,7 +94,8 @@ class Adam(Optimizer):
             t = (curr_epoch) * n_batches + curr_batch
 
             for p, param in enumerate(self._params):
-                _lr = self.q_lr if param.is_forward else self.lr
+                # _lr = self.q_lr if param.is_forward else self.lr
+                _lr = self.lr
                 self.scale_batch(param, batch_size)
                 self.clip_grads(param)
                 self.decay_weights(param)
@@ -104,7 +105,7 @@ class Adam(Optimizer):
                 delta_w = np.sqrt(1 - self.beta_2 ** t) * self.c_w[p] / (torch.sqrt(self.v_w[p]) + self.eps)
                 param.weight += _lr * delta_w
 
-                if param.use_bias:
+                if param.bias is not None:
                     self.c_b[p] = self.beta_1 * self.c_b[p] + (1 - self.beta_1) * param.grad["bias"]
                     self.v_b[p] = self.beta_2 * self.v_b[p] + (1 - self.beta_2) * param.grad["bias"] ** 2
                     delta_b = (

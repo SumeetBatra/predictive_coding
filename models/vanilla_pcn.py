@@ -24,6 +24,14 @@ class RELU(nn.ReLU):
         return out
 
 
+class Identity(nn.Identity):
+    def __init__(self):
+        super().__init__()
+
+    def deriv(self, x: torch.Tensor):
+        return torch.ones((1,)).to(x.device)
+
+
 class PCLinear(nn.Linear):
     def __init__(self, in_features: int, out_features: int, activation: nn.Module, **kwargs):
         '''
@@ -34,25 +42,31 @@ class PCLinear(nn.Linear):
         self.activation = activation
         self.x = None
         self.grad = {'weights': None, 'bias': None}
+        nn.init.normal_(self.weight, 0., 0.05)
+        self.bias.data = torch.zeros_like(self.bias.data)
 
     def forward(self, x: torch.Tensor):
         self.x = x.clone()
-        return self.activation(nn.Linear.forward(self, x))
+        # TODO: not sure why the bias term comes after the activation. Pretty sure this is wrong
+        out = self.activation(self.x @ self.weight.T)
+        if self.bias is not None:
+            out += self.bias
+        return out
 
     def backward(self, error: torch.Tensor):
         '''
         Computes the local gradient of the error of the output of this layer wrt layer params
         :param e: Error
         '''
-        fn_deriv = self.activation.deriv(self.x @ self.weight)
-        out = (error * fn_deriv) @ self.weight.T
+        fn_deriv = self.activation.deriv(self.x @ self.weight.T)
+        out = (error * fn_deriv) @ self.weight
         return out
 
     def update_gradient(self, error: torch.Tensor):
-        fn_deriv = self.activation(self.x @ self.weight)
+        fn_deriv = self.activation.deriv(self.x @ self.weight.T)
         delta = self.x.T @ (error * fn_deriv)
-        self.grad['weights'] = delta
-        if self.bias:
+        self.grad['weights'] = delta.T
+        if self.bias is not None:
             self.grad['bias'] = error.sum(0)
 
     def reset_grad(self):
@@ -64,8 +78,8 @@ class PCNet(nn.Module):
         super().__init__()
         fc1 = PCLinear(784, 128, RELU())
         fc2 = PCLinear(128, 64, RELU())
-        fc3 = PCLinear(64, 10, nn.Identity())
-        self.layers = [fc1, fc2, fc3]
+        fc3 = PCLinear(64, 10, Identity())
+        self.layers = nn.ModuleList([fc1, fc2, fc3])
         self.num_layers = len(self.layers)
 
         self.preds = [[] for _ in range(self.num_layers + 1)]
@@ -85,10 +99,14 @@ class PCNet(nn.Module):
         # clamp the activity of the last layer to be the target
         self.mus[-1] = target.clone()
 
+    def update_grads(self):
+        for l in range(self.num_layers):
+            self.layers[l].update_gradient(self.errors[l+1])
+
     def forward(self, x: torch.Tensor):
         with torch.no_grad():
             for layer in self.layers:
-                x = self.layer(x)  # nonlinearities happen within each layer
+                x = layer(x)  # nonlinearities happen within each layer
         return x
 
     def reset(self):
@@ -100,11 +118,11 @@ class PCNet(nn.Module):
         for l in range(1, self.num_layers):
             self.mus[l] = self.layers[l-1].forward(self.mus[l-1])
 
-    def inference(self, n_iters: int, fixed_preds: bool = False):
+    def inference(self, n_iters: int, fixed_preds: bool = True):
         for n in range(1, self.num_layers + 1):
             # TODO: I think this is already computed when we call propagate_mu ?
             self.preds[n] = self.layers[n-1].forward(self.mus[n-1])
-            self.errors[n] = self.mu[n] - self.preds[n]
+            self.errors[n] = self.mus[n] - self.preds[n]
 
         for _ in range(n_iters):
             # step the activities to minimize free energy

@@ -23,10 +23,6 @@ def parse_args():
     return vars(args)
 
 
-def onehot_encoding(labels: torch.Tensor):
-    return F.one_hot(labels)
-
-
 def accuracy(preds, targets):
     batch_size = preds.shape[0]
     correct = 0
@@ -48,8 +44,8 @@ def train_supervised(args: Mapping[str, Any]):
     train_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True)
     test_loader = DataLoader(test_dataset, batch_size, shuffle=True, drop_last=True)
 
-    model = PCNet(mu_dt=0.01)
-    optimizer = Adam(model.params, lr=args['lr'], grad_clip=args['grad_clip'])
+    model = PCNet(mu_dt=0.01).to(device)
+    optimizer = Adam(model.params, lr=args['lr'], grad_clip=args['grad_clip'], batch_scale=False)
 
     losses = []
     accs = []
@@ -57,19 +53,21 @@ def train_supervised(args: Mapping[str, Any]):
     for epoch in range(args['num_epochs']):
         for i, (imgs, labels) in enumerate(train_loader):
             imgs = imgs.view(batch_size, -1).to(device)
-            labels = labels.to(device).to(torch.float32)
+            labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
 
             optimizer.zero_grad()
             # reset activity predictions, prediction errors, and true activities
             model.reset()
             # clamp first activity to be the data
-            model.set_input(labels)
+            model.set_input(imgs)
             # forward propagate the activity due to the input signal
             model.propogate_mu()
             # clamp the output activity to be the labels for the input data
             model.set_target(labels)
             # perform inference to minimize the free energy
             model.inference(n_iters=t)
+            # manually set the gradients
+            model.update_grads()
             # update the weights
             optimizer.step(
                 curr_epoch=epoch,
@@ -78,12 +76,14 @@ def train_supervised(args: Mapping[str, Any]):
                 batch_size=imgs.shape[0]
             )
 
-            if epoch % args['test_every'] == 0:
-                acc = 0
-                for _, (imgs, labels) in enumerate(test_loader):
-                    label_preds = model(imgs)
-                    acc += accuracy(label_preds, labels)
-                print(f'Test @ Epoch {epoch} / Accuracy: {(acc / len(test_loader)):.4f}')
+        if epoch % args['test_every'] == 0:
+            acc = 0
+            for _, (imgs, labels) in enumerate(test_loader):
+                imgs = imgs.view(batch_size, -1).to(device)
+                labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
+                label_preds = model(imgs)
+                acc += accuracy(label_preds, labels)
+            print(f'Test @ Epoch {epoch} / Accuracy: {(acc / len(test_loader)):.4f}')
 
 
 if __name__ == '__main__':

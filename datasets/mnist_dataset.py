@@ -1,5 +1,5 @@
 import torch
-
+import torch.nn.functional as F
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 
@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 
 def get_mnist_dataset(train=False, download=False):
     dataset = datasets.MNIST(root='./data', train=train, download=download, transform=transforms.Compose([
-        transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))
+        transforms.ToTensor()
     ]))
 
     return dataset
