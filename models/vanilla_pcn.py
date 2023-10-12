@@ -55,20 +55,27 @@ class PCLinear(nn.Linear):
         if self.bias:
             self.grad['bias'] = error.sum(0)
 
+    def reset_grad(self):
+        self.grad = {'weights': None, 'bias': None}
+
 
 class PCNet(nn.Module):
     def __init__(self, mu_dt):
         super().__init__()
         fc1 = PCLinear(784, 128, RELU())
         fc2 = PCLinear(128, 64, RELU())
-        fc3 = PCLinear(64, 10, RELU())
-        self.layers = nn.ModuleList([fc1, fc2, fc3])
+        fc3 = PCLinear(64, 10, nn.Identity())
+        self.layers = [fc1, fc2, fc3]
         self.num_layers = len(self.layers)
 
         self.preds = [[] for _ in range(self.num_layers + 1)]
         self.errors = [[] for _ in range(self.num_layers + 1)]
-        self.mus = [[] for _ in range(self.num_layers + 1)]
+        self.mus = [[] for _ in range(self.num_layers + 1)]  # these are the outputs of each layer before the activations
         self.mu_dt = mu_dt
+
+    @property
+    def params(self):
+        return self.layers
 
     def set_input(self, x: torch.Tensor):
         # clamp the neural activity of 1st layer to the signal
@@ -84,13 +91,31 @@ class PCNet(nn.Module):
                 x = self.layer(x)  # nonlinearities happen within each layer
         return x
 
-    def backprop_infer(self, x: torch.Tensor, labels: torch.Tensor, loss_fn: Callable):
-        with torch.no_grad():
-            device = next(self.parameters()).device
-            out = self.forward(x)
-            errors = [[] for i in range(self.num_layers + 1)]
-            loss, dloss = TAF.vjp(lambda out: loss_fn(out, labels), out, torch.tensor(1).to(device))
-            errors[-1] = dloss
-            for i, layer in enumerate(reversed(self.layers)):
-                error = layer.backward()
-                errors[self.num_layers - i - 1] = error
+    def reset(self):
+        self.preds = [[] for _ in range(self.num_layers + 1)]
+        self.errors = [[] for _ in range(self.num_layers + 1)]
+        self.mus = [[] for _ in range(self.num_layers + 1)]
+
+    def propogate_mu(self):
+        for l in range(1, self.num_layers):
+            self.mus[l] = self.layers[l-1].forward(self.mus[l-1])
+
+    def inference(self, n_iters: int, fixed_preds: bool = False):
+        for n in range(1, self.num_layers + 1):
+            # TODO: I think this is already computed when we call propagate_mu ?
+            self.preds[n] = self.layers[n-1].forward(self.mus[n-1])
+            self.errors[n] = self.mu[n] - self.preds[n]
+
+        for _ in range(n_iters):
+            # step the activities to minimize free energy
+            for l in range(1, self.num_layers):
+                # TODO: why is delta computed this way?
+                delta = self.layers[l].backward(self.errors[l + 1]) - self.errors[l]
+                # TODO: so is mu_d the learning rate for the inference phase?
+                self.mus[l] = self.mus[l] + self.mu_dt * delta
+
+            # recompute error in predictions
+            for n in range(1, self.num_layers + 1):
+                if not fixed_preds:
+                    self.preds[n] = self.layers[n-1].forward(self.mus[n-1])
+                self.errors[n] = self.mus[n] - self.preds[n]

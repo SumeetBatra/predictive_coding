@@ -22,10 +22,8 @@ class MNISTDataset(Dataset):
     def __getitem__(self, index):
         if isinstance(index, torch.Tensor):
             index = list(index)
-        img, _ = self.dataset[index]
-        img[img > 0] = 1
-        img[img == 0] = -1
-        return img
+        img, label = self.dataset[index]
+        return img, label
 
     def __len__(self):
         return len(self.dataset)
