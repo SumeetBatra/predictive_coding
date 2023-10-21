@@ -34,37 +34,28 @@ class PCConv2D(nn.Conv2d):
         self.activity = nn.Conv2d.forward(self, self.x)
 
         out = self.activation(self.activity)
-        if self.bias is not None:
-            out = out + self.bias[None, :, None, None]
+        # if self.bias is not None:
+        #     out = out + self.bias[None, :, None, None]
         return out
 
-    def backward(self, error: torch.Tensor):
-        # fn_deriv = self.activation.deriv(self.activity)
-        # # TODO: not sure if this is right
-        # # out = nn.Conv2d.forward(self, error * fn_deriv)
-        # out = error * (fn_deriv @ self.kernel_grad.T)
-        # return out
-        return -torch.autograd.grad(0.5 * torch.pow(error, 2).sum(), [self.x], retain_graph=True)[0]
 
-    def update_gradient(self, error: torch.Tensor):
+    def update_gradient(self, delta_w: torch.Tensor, delta_b: torch.Tensor):
+        self.grad['weights'] = delta_w
+        if self.bias is not None:
+            self.grad['bias'] = delta_b
         # fn_deriv = self.activation.deriv(self.activity)
         # delta = error * (fn_deriv @ self.kernel_grad.T)
         # self.grad['weights'] = delta
         # if self.bias is not None:
         #     self.grad['bias'] = error.sum(0)
-        delta = -torch.autograd.grad(0.5 * torch.pow(error, 2).sum(), [self.weight], retain_graph=True)[0]
-        self.grad['weights'] = delta
-        if self.bias is not None:
-            self.grad['bias'] = -torch.autograd.grad(0.5 * torch.pow(error, 2).sum(), [self.bias], retain_graph=True)[0]
-
 
     def reset_grad(self):
         self.grad = {'weights': None, 'bias': None}
 
 
 class PCConvNet(PCNetBase):
-    def __init__(self, mu_dt: float):
-        super().__init__(mu_dt)
+    def __init__(self, mu_dt: float, batch_size: int):
+        super().__init__(mu_dt, batch_size)
         proj_in = PCConv2D(in_channels=1, out_channels=4, activation=RELU(), kernel_size=4, stride=2, padding=3)
         conv1 = PCConv2D(4, 8, RELU(), kernel_size=3, stride=2, padding=1)
         conv2 = PCConv2D(8, 16, RELU(), kernel_size=3, stride=2, padding=1)

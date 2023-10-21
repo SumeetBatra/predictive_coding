@@ -1,14 +1,18 @@
 import torch
 import torch.nn as nn
+import torch.autograd as autograd
+
+from torch.nn.utils.rnn import pad_sequence
 
 
 class PCNetBase(nn.Module):
     layers: nn.ModuleList
     num_layers: int
 
-    def __init__(self, mu_dt: float):
+    def __init__(self, mu_dt: float, batch_size: int):
         super().__init__()
         self.mu_dt = mu_dt
+        self.batch_size = batch_size
 
     @property
     def params(self):
@@ -16,15 +20,24 @@ class PCNetBase(nn.Module):
 
     def set_input(self, x: torch.Tensor):
         # clamp the neural activity of 1st layer to the signal
-        self.mus[0] = x.clone()
+        self.mus[0] = x
+        self.mus[0].requires_grad_(True)
 
     def set_target(self, target: torch.Tensor):
         # clamp the activity of the last layer to be the target
-        self.mus[-1] = target.clone()
+        self.mus[-1] = target
+        self.mus[-1].requires_grad_(True)
 
     def update_grads(self):
+        loss = 0
         for l in range(self.num_layers):
-            self.layers[l].update_gradient(self.errors[l+1])
+            mu_pred = self.layers[l].forward(self.layers[l].x)
+            delta_w = torch.autograd.grad(mu_pred, inputs=[self.layers[l].weight], grad_outputs=self.errors[l + 1],
+                                retain_graph=True)[0]
+            delta_b = torch.autograd.grad(mu_pred, inputs=[self.layers[l].bias], grad_outputs=self.errors[l + 1],
+                                retain_graph=True)[0]
+            self.layers[l].update_gradient(delta_w, delta_b)
+            loss = loss + self.errors[l+1].sum()
 
     def forward(self, x: torch.Tensor):
         with torch.enable_grad():
@@ -51,7 +64,7 @@ class PCNetBase(nn.Module):
         for n in range(1, self.num_layers + 1):
             # TODO: I think this is already computed when we call propagate_mu ?
             self.preds[n] = self.layers[n-1].forward(self.mus[n-1])
-            self.errors[n] = (self.mus[n] - self.preds[n]).view(bs, -1)
+            self.errors[n] = self.mus[n] - self.preds[n]
 
         for i in range(n_iters):
             # print(f'Inference iteration {i}')
@@ -64,7 +77,9 @@ class PCNetBase(nn.Module):
             # step the activities to minimize free energy
             for l in range(1, self.num_layers):
                 # TODO: why is delta computed this way?
-                delta = self.layers[l].backward(self.errors[l + 1]).view(bs, -1) - self.errors[l]
+                mu_pred = self.layers[l].forward(self.layers[l].x)
+                delta = torch.autograd.grad(mu_pred, inputs=[self.layers[l].x], grad_outputs=self.errors[l + 1],
+                                    retain_graph=True)[0]
                 # TODO: so is mu_d the learning rate for the inference phase?
                 self.mus[l] = self.mus[l] + self.mu_dt * delta.view(self.mus[l].shape)
 
@@ -72,4 +87,7 @@ class PCNetBase(nn.Module):
             for n in range(1, self.num_layers + 1):
                 if not fixed_preds:
                     self.preds[n] = self.layers[n-1].forward(self.mus[n-1])
-                self.errors[n] = (self.mus[n] - self.preds[n]).view(bs, -1)
+                self.errors[n] = self.mus[n] - self.preds[n]
+
+    def inference2(self):
+        pass

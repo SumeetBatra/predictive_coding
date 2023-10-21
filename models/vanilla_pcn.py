@@ -1,3 +1,4 @@
+import torch
 
 from models.pcn_base import PCNetBase
 from models.activations import *
@@ -17,36 +18,23 @@ class PCLinear(nn.Linear):
         super().__init__(in_features, out_features, **kwargs)
         self.activation = activation
         self.x = None
+        self.x_shape = None
         self.grad = {'weights': None, 'bias': None}
         nn.init.normal_(self.weight, 0., 0.05)
         self.bias.data = torch.zeros_like(self.bias.data)
 
     def forward(self, x: torch.Tensor):
         bs = x.shape[0]
+        self.x_shape = x.shape
         x = x.view(bs, -1)
-        self.x = x
-        # TODO: not sure why the bias term comes after the activation. Pretty sure this is wrong
-        out = self.activation(self.x @ self.weight.T)
-        if self.bias is not None:
-            out = out + self.bias
+        self.x = x.clone()
+        out = self.activation(nn.Linear.forward(self, self.x))
         return out
 
-    def backward(self, error: torch.Tensor):
-        '''
-        Computes the local gradient of the error of the output of this layer wrt layer params
-        :param error: Error
-        '''
-        # fn_deriv = self.activation.deriv(self.x @ self.weight.T)
-        # out = (error * fn_deriv) @ self.weight
-        # return out
-        return -torch.autograd.grad(0.5 * torch.pow(error, 2).sum(), [self.x], retain_graph=True)[0]
-
-    def update_gradient(self, error: torch.Tensor):
-        fn_deriv = self.activation.deriv(self.x @ self.weight.T)
-        delta = self.x.T @ (error * fn_deriv)
-        self.grad['weights'] = delta.T
+    def update_gradient(self, delta_w: torch.Tensor, delta_b: torch.Tensor):
+        self.grad['weights'] = delta_w
         if self.bias is not None:
-            self.grad['bias'] = error.sum(0)
+            self.grad['bias'] = delta_b
 
         # delta = -torch.autograd.grad(0.5 * torch.pow(error, 2).sum(), [self.weight], retain_graph=True)[0]
         # self.grad['weights'] = delta
@@ -58,8 +46,8 @@ class PCLinear(nn.Linear):
 
 
 class PCNet(PCNetBase):
-    def __init__(self, mu_dt):
-        super().__init__(mu_dt)
+    def __init__(self, mu_dt: float, batch_size: int):
+        super().__init__(mu_dt, batch_size)
         fc1 = PCLinear(784, 128, RELU())
         fc2 = PCLinear(128, 64, RELU())
         fc3 = PCLinear(64, 10, Identity())
@@ -68,8 +56,8 @@ class PCNet(PCNetBase):
 
 
 class GenerativePCNet(PCNet):
-    def __init__(self, mu_dt: float):
-        super().__init__(mu_dt)
+    def __init__(self, mu_dt: float, batch_size: int):
+        super().__init__(mu_dt, batch_size)
         # generative model is a bit sensitive to choice of activation. Tanh does better than relu, probably b/c
         # mnist data is normalized to [0, 1]
         fc1 = PCLinear(10, 100, activation=TANH())

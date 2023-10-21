@@ -68,7 +68,7 @@ def train(args: Mapping[str, Any]):
     train_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True)
     test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=True, drop_last=True)
 
-    model = GenerativePCNet(mu_dt=0.01) if args['generative'] else PCNet(mu_dt=0.01)
+    model = GenerativePCNet(mu_dt=0.01, batch_size=batch_size) if args['generative'] else PCNet(mu_dt=0.01, batch_size=batch_size)
     model.to(device)
     optimizer = Adam(model.params, lr=args['lr'], grad_clip=args['grad_clip'], batch_scale=False)
 
@@ -78,7 +78,7 @@ def train(args: Mapping[str, Any]):
     for epoch in range(args['num_epochs']):
         print(f'Epoch {epoch}')
         for i, (imgs, labels) in enumerate(tqdm(train_loader)):
-            imgs = imgs.view(batch_size, 1, -1).to(device)
+            imgs = imgs.view(batch_size, 1, 28, 28).to(device)
             labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
 
             optimizer.zero_grad()
