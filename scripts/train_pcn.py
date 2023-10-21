@@ -10,9 +10,11 @@ from optimizers.optim import Adam
 from torch.utils.data import DataLoader
 from datasets.mnist_dataset import MNISTDataset
 from models.vanilla_pcn import PCNet, GenerativePCNet
+from models.cnn_pcn import PCConvNet
 from typing import Mapping, List, Any
 from common.utils import config_wandb
 from distutils.util import strtobool
+from tqdm import tqdm
 
 
 def parse_args():
@@ -72,10 +74,11 @@ def train(args: Mapping[str, Any]):
 
     losses = []
     accs = []
-
+    # torch.autograd.set_detect_anomaly(True)
     for epoch in range(args['num_epochs']):
-        for i, (imgs, labels) in enumerate(train_loader):
-            imgs = imgs.view(batch_size, -1).to(device)
+        print(f'Epoch {epoch}')
+        for i, (imgs, labels) in enumerate(tqdm(train_loader)):
+            imgs = imgs.view(batch_size, 1, -1).to(device)
             labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
 
             optimizer.zero_grad()
@@ -106,7 +109,7 @@ def train(args: Mapping[str, Any]):
             if not args['generative']:
                 acc = 0
                 for _, (imgs, labels) in enumerate(test_loader):
-                    imgs = imgs.view(batch_size, -1).to(device)
+                    imgs = imgs.view(batch_size, 1, 28, 28).to(device)
                     labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
                     label_preds = model(imgs)
                     acc += accuracy(label_preds, labels)
@@ -120,7 +123,7 @@ def train(args: Mapping[str, Any]):
             else:
                 acc = 0
                 for _, (imgs, labels) in enumerate(test_loader):
-                    imgs = imgs.view(test_batch_size, -1).to(device)
+                    imgs = imgs.view(test_batch_size, 1, 28, 28).to(device)
                     labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
                     ### recover labels given the image data
                     # reset the predictions, mus, and errors
