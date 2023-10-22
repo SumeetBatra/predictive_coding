@@ -10,6 +10,7 @@ from optimizers.optim import Adam
 from torch.utils.data import DataLoader
 from datasets.mnist_dataset import MNISTDataset
 from models.vanilla_pcn import PCNet, GenerativePCNet
+from models.diffusion_pcn import PCDiffusion
 from models.cnn_pcn import PCConvNet
 from typing import Mapping, List, Any
 from common.utils import config_wandb
@@ -68,9 +69,10 @@ def train(args: Mapping[str, Any]):
     train_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True)
     test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=True, drop_last=True)
 
-    model = GenerativePCNet(mu_dt=0.01, batch_size=batch_size) if args['generative'] else PCNet(mu_dt=0.01, batch_size=batch_size)
+    model = PCDiffusion(mu_dt=0.01, batch_size=batch_size, n_diffusion_steps=10) if args['generative'] else PCNet(mu_dt=0.01, batch_size=batch_size)
     model.to(device)
     optimizer = Adam(model.params, lr=args['lr'], grad_clip=args['grad_clip'], batch_scale=False)
+    # optimizer = torch.optim.Adam(model.parameters(), args['lr'])
 
     losses = []
     accs = []
@@ -78,8 +80,10 @@ def train(args: Mapping[str, Any]):
     for epoch in range(args['num_epochs']):
         print(f'Epoch {epoch}')
         for i, (imgs, labels) in enumerate(tqdm(train_loader)):
-            imgs = imgs.view(batch_size, 1, 28, 28).to(device)
-            labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
+            imgs = imgs.view(batch_size, -1).to(device)
+            # labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
+            labels = torch.randn((batch_size, 784)).to(device)
+            labels.requires_grad_(True)
 
             optimizer.zero_grad()
             # reset activity predictions, prediction errors, and true activities
@@ -121,34 +125,36 @@ def train(args: Mapping[str, Any]):
                         'test/accuracy': epoch_acc,
                     })
             else:
-                acc = 0
-                for _, (imgs, labels) in enumerate(test_loader):
-                    imgs = imgs.view(test_batch_size, 1, 28, 28).to(device)
-                    labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
-                    ### recover labels given the image data
-                    # reset the predictions, mus, and errors
-                    model.reset()
-                    # reset the layer outputs randomly
-                    model.reset_mus(batch_size=test_batch_size, init_std=0.01)
-                    # clamp last layer output to be the images
-                    model.set_target(imgs)
-                    # perform inference
-                    model.inference(n_iters=200, predict_label_inputs=True)
-                    label_preds = model.mus[0]
-                    acc += accuracy(label_preds, labels)
-                epoch_acc = 100. * acc / len(test_loader)
-                print(f'Test @ Epoch {epoch} / Accuracy: {epoch_acc:.4f}')
-                if args['use_wandb']:
-                    wandb.log({
-                        'epoch': epoch,
-                        'test/accuracy': epoch_acc,
-                    })
+            #     acc = 0
+            #     for _, (imgs, labels) in enumerate(test_loader):
+            #         imgs = imgs.view(test_batch_size, -1).to(device)
+            #         # labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
+            #         ### recover labels given the image data
+            #         # reset the predictions, mus, and errors
+            #         model.reset()
+            #         # reset the layer outputs randomly
+            #         model.reset_mus(batch_size=test_batch_size, init_std=0.01)
+            #         # clamp last layer output to be the images
+            #         model.set_target(imgs)
+            #         # perform inference
+            #         model.inference(n_iters=200, predict_label_inputs=True)
+            #         label_preds = model.mus[0]
+            #         acc += accuracy(label_preds, labels)
+            #     epoch_acc = 100. * acc / len(test_loader)
+            #     print(f'Test @ Epoch {epoch} / Accuracy: {epoch_acc:.4f}')
+            #     if args['use_wandb']:
+            #         wandb.log({
+            #             'epoch': epoch,
+            #             'test/accuracy': epoch_acc,
+            #         })
 
                 ### generate the images given the labels
                 model.reset()
                 _, labels = next(iter(test_loader))
-                labels = labels[:8]
-                labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
+                # labels = labels[:8]
+                # labels = F.one_hot(labels, num_classes=10).to(device).to(torch.float32)
+                labels = torch.randn((8, 784)).to(device)
+                labels.requires_grad_(True)
                 img_preds = model.forward(labels).cpu().detach().reshape(-1, 28, 28)
                 _, axes = plt.subplots(2, 4)
                 axes = axes.flatten()

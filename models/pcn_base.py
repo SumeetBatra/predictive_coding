@@ -29,15 +29,20 @@ class PCNetBase(nn.Module):
         self.mus[-1].requires_grad_(True)
 
     def update_grads(self):
-        loss = 0
         for l in range(self.num_layers):
             mu_pred = self.layers[l].forward(self.layers[l].x)
             delta_w = torch.autograd.grad(mu_pred, inputs=[self.layers[l].weight], grad_outputs=self.errors[l + 1],
                                 retain_graph=True)[0]
             delta_b = torch.autograd.grad(mu_pred, inputs=[self.layers[l].bias], grad_outputs=self.errors[l + 1],
                                 retain_graph=True)[0]
-            self.layers[l].update_gradient(delta_w, delta_b)
-            loss = loss + self.errors[l+1].sum()
+            self.layers[l].grad['weights'] = delta_w
+            self.layers[l].grad['bias'] = delta_b
+
+            # dw, db = torch.autograd.grad(mu_pred, inputs=self.layers[l].parameters(), grad_outputs=self.errors[l + 1],
+            #                              retain_graph=True)
+            # params = dict(self.layers[l].named_parameters())
+            # params['weight'].grad = dw
+            # params['bias'].grad = db
 
     def forward(self, x: torch.Tensor):
         with torch.enable_grad():
@@ -54,6 +59,7 @@ class PCNetBase(nn.Module):
         device = next(self.parameters()).device
         for l in range(self.num_layers):
             self.mus[l] = torch.empty(batch_size, self.layers[l].in_features).normal_(mean=0, std=init_std).to(device)
+            self.mus[l].requires_grad_(True)
 
     def propagate_mu(self):
         for l in range(1, self.num_layers):
@@ -72,7 +78,9 @@ class PCNetBase(nn.Module):
                 # when predict_label_inputs = False, mus[0] is clamped to be the input so there is no delta.
                 # however when predict_label_inputs = True, only mus[-1] is clamped to be the target, so we need to
                 # compute a delta for mus[0] and update mus[0] as well
-                delta = self.layers[0].backward(self.errors[1])
+                mu_pred = self.layers[0].forward(self.layers[0].x)
+                delta = torch.autograd.grad(mu_pred, inputs=[self.layers[0].x], grad_outputs=self.errors[1],
+                                            retain_graph=True)[0]
                 self.mus[0] = self.mus[0] + self.mu_dt * delta
             # step the activities to minimize free energy
             for l in range(1, self.num_layers):
@@ -88,6 +96,3 @@ class PCNetBase(nn.Module):
                 if not fixed_preds:
                     self.preds[n] = self.layers[n-1].forward(self.mus[n-1])
                 self.errors[n] = self.mus[n] - self.preds[n]
-
-    def inference2(self):
-        pass
